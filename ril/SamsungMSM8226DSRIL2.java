@@ -97,6 +97,8 @@ public class SamsungMSM8226DSRIL extends RIL implements CommandsInterface {
     private static final int RIL_UNSOL_STK_CC_ALPHA_NOTIFY_G7102 = 1041;
     private static final int RIL_UNSOL_UICC_SUBSCRIPTION_STATUS_CHANGED_G7102 = 11031;
 
+    private static int sEnabledDataSimId = -1;
+
     private Message mPendingGetSimStatus;
 
     public SamsungMSM8226DSRIL(Context context, int networkMode, int cdmaSubscription,Integer instanceId) {
@@ -500,22 +502,64 @@ public class SamsungMSM8226DSRIL extends RIL implements CommandsInterface {
         send(rr);
     }
 
-   @Override
+   //@Override
+   /* public void setDataAllowed(boolean allowed, Message result) {
+*	int req = 123;
+    *    RILRequest rr;
+*	if (allowed)
+    *    {
+    *        req = 116;
+    *        rr = RILRequest.obtain(req, result);
+    *    }
+    *    else
+    *    {
+    *        rr = RILRequest.obtain(req, result);
+    *        rr.mParcel.writeInt(1);
+    *        rr.mParcel.writeInt(allowed ? 1 : 0);
+    *    }
+    *   send(rr);
+    *}
+    */
+
+    @Override
     public void setDataAllowed(boolean allowed, Message result) {
-	int req = 123;
-        RILRequest rr;
-	if (allowed)
-        {
-            req = 116;
-            rr = RILRequest.obtain(req, result);
+        int simId = mInstanceId == null ? 0 : mInstanceId;
+        if (!allowed) {
+            // Deactivate data call. This happens when switching data SIM
+            // and the framework will wait for data call to be deactivated.
+            // Emulate this by switching to the other SIM.
+            simId = 1 - simId;
         }
-        else
-        {
-            rr = RILRequest.obtain(req, result);
-            rr.mParcel.writeInt(1);
-            rr.mParcel.writeInt(allowed ? 1 : 0);
+
+        if (sEnabledDataSimId != simId) {
+            if (RILJ_LOGD) riljLog("Setting data subscription to " + simId);
+            invokeOemRilRequestBrcm((byte) 0, (byte)(0x30 + simId), result);
+            sEnabledDataSimId = simId;
+        } else {
+            if (RILJ_LOGD) riljLog("Data subscription is already set to " + simId);
+            if (result != null) {
+                AsyncResult.forMessage(result, 0, null);
+                result.sendToTarget();
+            }
         }
-        send(rr);
+    }
+
+    @Override
+    protected void notifyRegistrantsRilConnectionChanged(int rilVer) {
+        super.notifyRegistrantsRilConnectionChanged(rilVer);
+        if (rilVer != -1) {
+            if (mInstanceId != null) {
+                // Enable simultaneous data/voice on Multi-SIM
+                invokeOemRilRequestBrcm((byte) 3, (byte) 1, null);
+            } else {
+                // Set data subscription to allow data in either SIM slot when using single SIM mode
+                setDataAllowed(true, null);
+            }
+        }
+    }
+
+    private void invokeOemRilRequestBrcm(byte key, byte value, Message response) {
+        invokeOemRilRequestRaw(new byte[] { 'B', 'R', 'C', 'M', key, value }, response);
     }
 
     private void logParcel(Parcel p) {
